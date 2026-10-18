@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "mirza/sub-claude-opus-5-5",
+  "provider": {
+    "mirza": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Mirza",
+      "options": {
+        "baseURL": "https://mirza.tapsi.tech/api/v1",
+        "apiKey": "sk-1GO08eVURJrNWvluCMOC5w"
+      },
+      "models": {
+        "sub-gpt-5.6-sol": { "name": "Mirza GPT 5.6 Sol" },
+        "sub-gpt-5.6-terra": { "name": "Mirza GPT 5.6 Terra" },
+        "sub-gpt-5.6-luna": { "name": "Mirza GPT 5.6 Luna" },
+        "sub-gpt-6-luna": { "name": "Mirza GPT 6 Luna" },
+        "sub-gpt-6-sol": { "name": "Mirza GPT 6 Sol" },
+        "local-qwen3.8": { "name": "Mirza Qwen 3.8 Local" },
+        "sub-claude-sonnet-5-5": { "name": "Mirza Claude Sonnet 5.5" },
+        "sub-claude-opus-5-5": { "name": "Mirza Claude Opus 5.5" },
+        "sub-claude-haiku-5-5": { "name": "Mirza Claude Haiku 5.5" }
+      }
+    }
+  }
+}
