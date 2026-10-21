@@ -457,7 +457,11 @@ def companies(request):
         return JsonResponse({"companies": [serialize_company(c) for c in Company.objects.order_by("name")]})
     if request.method == "GET":
         query = (request.GET.get("q") or "").strip()
-        items = Company.objects.filter(name__icontains=query).order_by("name")[:50] if query else Company.objects.order_by("-updated_at")[:50]
+        items = (
+            Company.objects.filter(name__icontains=query).order_by("name")[:50]
+            if query
+            else Company.objects.order_by("-updated_at")
+        )
         return JsonResponse({"companies": [serialize_company(c) for c in items]})
     body = request.POST if request.content_type.startswith("multipart/form-data") else json.loads(request.body or "{}")
     name = (body.get("name") or "").strip()

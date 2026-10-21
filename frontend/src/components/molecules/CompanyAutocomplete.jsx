@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Button from '../atoms/Button';
-
-const getCompanyInitials = (name) => name.trim().slice(0, 2).toUpperCase();
+import CompanyLogo from '../atoms/CompanyLogo';
 
 function CompanyAutocomplete({ value, selectedId, onChange, onSelect }) {
   const [suggestions, setSuggestions] = useState([]);
@@ -56,23 +55,7 @@ function CompanyAutocomplete({ value, selectedId, onChange, onSelect }) {
               type="button"
               onMouseDown={() => chooseSuggestion(company)}
             >
-              <span className="company-logo small">
-                {company.has_brand_image && company.logo_url ? (
-                  <>
-                    <img
-                      src={company.logo_url}
-                      alt=""
-                      onError={(event) => {
-                        event.currentTarget.style.display = 'none';
-                        event.currentTarget.nextElementSibling.style.display = 'grid';
-                      }}
-                    />
-                    <span style={{display: 'none'}}>{getCompanyInitials(company.name)}</span>
-                  </>
-                ) : (
-                  <span>{getCompanyInitials(company.name)}</span>
-                )}
-              </span>
+              <CompanyLogo name={company.name} src={company.has_brand_image ? company.logo_url : ''}/>
               <span>{company.name}</span>
             </Button>
           ))}
