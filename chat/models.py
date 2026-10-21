@@ -35,6 +35,39 @@ class BrowserContext(models.Model):
     screenshot = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+class Company(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    aliases = models.JSONField(default=list, blank=True)
+    website = models.URLField(blank=True)
+    linkedin_url = models.URLField(blank=True)
+    brand_image_url = models.TextField(blank=True)
+    industry = models.CharField(max_length=200, blank=True)
+    size = models.CharField(max_length=100, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class CompanyFact(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, related_name="facts", on_delete=models.CASCADE)
+    category = models.CharField(max_length=100, default="general")
+    fact = models.TextField()
+    source = models.CharField(max_length=500, blank=True)
+    confidence = models.CharField(max_length=20, default="medium")
+    observed_at = models.DateTimeField(auto_now_add=True)
+
+class CompanyEmployee(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, related_name="employees", on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    title = models.CharField(max_length=300, blank=True)
+    linkedin_url = models.URLField(blank=True)
+    notes = models.TextField(blank=True)
+    source = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
 class Conversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200, default="New conversation")
