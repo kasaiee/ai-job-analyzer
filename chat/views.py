@@ -12,12 +12,13 @@ from pypdf import PdfReader
 from PIL import Image
 import fitz
 from django.conf import settings
-from django.http import JsonResponse, StreamingHttpResponse
+from django.db.models import Q
+from django.http import FileResponse, JsonResponse, StreamingHttpResponse
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from .models import Conversation, Message, Folder, StoredFile, MemoryNode, BrowserContext, Company, CompanyFact, CompanyEmployee
+from .models import Conversation, Message, Folder, StoredFile, MemoryNode, BrowserContext, Company, CompanyFact, CompanyEmployee, JobApplication
 
 MAX_FILES = 10
 MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -25,6 +26,25 @@ TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".xml", ".html", ".css", ".js
 URL_PATTERN = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.IGNORECASE)
 MAX_URLS = 5
 MAX_URL_BYTES = 2 * 1024 * 1024
+
+def ai_configuration(request):
+    api_token = request.headers.get("X-AI-API-Token", "").strip()
+    api_url = request.headers.get("X-AI-API-URL", "").strip().rstrip("/")
+    if not api_token or not api_url:
+        raise ValueError("Configure the AI API token and URL in Settings before using AI features.")
+    parsed_url = urlparse(api_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError("The AI API URL in Settings is invalid.")
+    return api_url, api_token
+
+def ai_completion(request, payload, **options):
+    api_url, api_token = ai_configuration(request)
+    return requests.post(
+        f"{api_url}/chat/completions",
+        headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"},
+        json=payload,
+        **options,
+    )
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -148,11 +168,16 @@ def save_url_company_profiles(message, fetched_context):
         saved.append(serialize_company(company))
     return saved
 
-def serialize_file(f):
-    return {"id": str(f.id), "name": f.name, "mime_type": f.mime_type, "size": f.size, "folder_id": str(f.folder_id) if f.folder_id else None, "created_at": f.created_at.isoformat()}
+def serialize_file(f, request=None):
+    url = f.file.url
+    download_url = f"/api/drive/files/{f.id}/"
+    if request:
+        url = request.build_absolute_uri(url)
+        download_url = request.build_absolute_uri(download_url)
+    return {"id": str(f.id), "name": f.name, "mime_type": f.mime_type, "size": f.size, "url": url, "download_url": download_url, "extracted_text": f.extracted_text, "folder_id": str(f.folder_id) if f.folder_id else None, "created_at": f.created_at.isoformat()}
 
 def serialize_folder(f):
-    return {"id": str(f.id), "name": f.name, "parent_id": str(f.parent_id) if f.parent_id else None}
+    return {"id": str(f.id), "name": f.name, "parent_id": str(f.parent_id) if f.parent_id else None, "created_at": f.created_at.isoformat()}
 
 def stored_file_parts(f):
     with f.file.open("rb") as stream:
@@ -165,7 +190,13 @@ def drive(request):
     parent = request.GET.get("parent")
     folders = Folder.objects.filter(parent_id=parent if parent else None).order_by("name")
     files = StoredFile.objects.filter(folder_id=parent if parent else None).order_by("name")
-    return JsonResponse({"folders": [serialize_folder(f) for f in folders], "files": [serialize_file(f) for f in files]})
+    breadcrumbs = []
+    current = Folder.objects.filter(id=parent).first() if parent else None
+    while current:
+        breadcrumbs.append(serialize_folder(current))
+        current = current.parent
+    breadcrumbs.reverse()
+    return JsonResponse({"folders": [serialize_folder(f) for f in folders], "files": [serialize_file(f, request) for f in files], "breadcrumbs": breadcrumbs})
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -185,21 +216,43 @@ def folder_detail(request, folder_id):
         if not incoming: return JsonResponse({"error": "File is required."}, status=400)
         if incoming.size > MAX_FILE_SIZE: return JsonResponse({"error": "Files must be 10 MB or smaller."}, status=400)
         stored = StoredFile.objects.create(name=incoming.name, file=incoming, mime_type=incoming.content_type or mimetypes.guess_type(incoming.name)[0] or "application/octet-stream", size=incoming.size, folder=folder)
-        return JsonResponse(serialize_file(stored), status=201)
+        return JsonResponse(serialize_file(stored, request), status=201)
     if request.method == "PATCH":
         folder.name = json.loads(request.body or "{}").get("name", folder.name).strip(); folder.save(update_fields=["name"]); return JsonResponse(serialize_folder(folder))
     folder.delete(); return JsonResponse({"ok": True})
 
 @csrf_exempt
-@require_http_methods(["DELETE"])
+@require_http_methods(["GET", "DELETE"])
 def file_detail(request, file_id):
-    f = StoredFile.objects.get(id=file_id); f.file.delete(save=False); f.delete(); return JsonResponse({"ok": True})
+    stored_file = StoredFile.objects.get(id=file_id)
+    if request.method == "GET":
+        return FileResponse(
+            stored_file.file.open("rb"),
+            as_attachment=True,
+            filename=stored_file.name,
+            content_type=stored_file.mime_type or "application/octet-stream",
+        )
+    stored_file.file.delete(save=False)
+    stored_file.delete()
+    return JsonResponse({"ok": True})
 
 @csrf_exempt
 @require_http_methods(["GET"])
 def drive_search(request):
     query = (request.GET.get("q") or "").strip()
-    return JsonResponse({"files": [serialize_file(f) for f in StoredFile.objects.filter(name__icontains=query).order_by("name")[:20]]})
+    files = StoredFile.objects.filter(name__icontains=query)
+    if request.GET.get("scope") == "directory":
+        parent_id = request.GET.get("parent") or None
+        folder_ids = []
+        pending_ids = [parent_id] if parent_id else list(Folder.objects.filter(parent=None).values_list("id", flat=True))
+        while pending_ids:
+            folder_ids.extend(pending_ids)
+            pending_ids = list(Folder.objects.filter(parent_id__in=pending_ids).values_list("id", flat=True))
+        if parent_id:
+            files = files.filter(folder_id__in=folder_ids)
+        else:
+            files = files.filter(Q(folder=None) | Q(folder_id__in=folder_ids))
+    return JsonResponse({"files": [serialize_file(f, request) for f in files.order_by("name")[:100]]})
 
 def serialize_memory(node):
     return {"id": str(node.id), "name": node.name, "content": node.content, "is_leaf": node.is_leaf, "parent_id": str(node.parent_id) if node.parent_id else None, "updated_at": node.updated_at.isoformat(), "children": [serialize_memory(child) for child in node.children.order_by("name")]}
@@ -235,7 +288,7 @@ def memory_arrange(request):
     original = "\n".join(f"- {node.name}: {node.content}" for node in leaves)
     prompt = [{"role": "system", "content": "Organize the user's memories without losing facts. Return ONLY JSON: {\"groups\":[{\"name\":\"category\",\"items\":[{\"name\":\"short title\",\"content\":\"complete fact\"}]}]}. Preserve every distinct fact; merge only duplicates. Do not invent facts."}, {"role": "user", "content": original}]
     try:
-        response = requests.post(f"{settings.MIRZA_BASE_URL.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {settings.MIRZA_API_KEY}", "Content-Type": "application/json"}, json={"model": "sub-gpt-5.6-luna", "messages": prompt}, timeout=120)
+        response = ai_completion(request, {"model": "sub-gpt-5.6-luna", "messages": prompt}, timeout=120)
         response.raise_for_status(); data = response.json()["choices"][0]["message"]["content"]
         match = re.search(r"\{[\s\S]*\}", data); arranged = json.loads(match.group(0) if match else data)
         archive = MemoryNode.objects.create(name=f"Archive before arrangement {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", content=original, is_leaf=True)
@@ -258,7 +311,116 @@ def serialize_company(company):
         company_url = company.linkedin_url
     domain = urlparse(company_url).netloc.lower().removeprefix("www.") if company_url else ""
     logo_url = company.brand_image_url or (f"https://logo.clearbit.com/{domain}" if domain else "")
-    return {"id": str(company.id), "name": company.name, "aliases": company.aliases, "website": company.website, "linkedin_url": company.linkedin_url, "logo_url": logo_url, "industry": company.industry, "size": company.size, "location": company.location, "summary": company.summary, "updated_at": company.updated_at.isoformat(), "facts": [{"id": str(f.id), "category": f.category, "fact": f.fact, "source": f.source, "confidence": f.confidence, "observed_at": f.observed_at.isoformat()} for f in company.facts.order_by("-observed_at")], "employees": [{"id": str(e.id), "name": e.name, "title": e.title, "linkedin_url": e.linkedin_url, "notes": e.notes, "source": e.source} for e in company.employees.order_by("name")]}
+    return {"id": str(company.id), "name": company.name, "aliases": company.aliases, "website": company.website, "linkedin_url": company.linkedin_url, "logo_url": logo_url, "has_brand_image": bool(company.brand_image_url), "industry": company.industry, "size": company.size, "location": company.location, "summary": company.summary, "updated_at": company.updated_at.isoformat(), "facts": [{"id": str(f.id), "category": f.category, "fact": f.fact, "source": f.source, "confidence": f.confidence, "observed_at": f.observed_at.isoformat()} for f in company.facts.order_by("-observed_at")], "employees": [{"id": str(e.id), "name": e.name, "title": e.title, "linkedin_url": e.linkedin_url, "notes": e.notes, "source": e.source} for e in company.employees.order_by("name")]}
+
+def serialize_job_application(application, request=None):
+    image_url = application.company_image.url if application.company_image else ""
+    if not image_url:
+        image_url = (
+            Company.objects.filter(name__iexact=application.company_name)
+            .values_list("brand_image_url", flat=True)
+            .first()
+            or ""
+        )
+    if image_url and request and not urlparse(image_url).scheme:
+        image_url = request.build_absolute_uri(image_url)
+    return {
+        "id": str(application.id),
+        "company_name": application.company_name,
+        "company_image_url": image_url,
+        "company_description": application.company_description,
+        "job_post_link": application.job_post_link,
+        "job_description": application.job_description,
+        "created_at": application.created_at.isoformat(),
+    }
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def job_applications(request):
+    if request.method == "GET":
+        applications = JobApplication.objects.order_by("-created_at")
+        return JsonResponse({"applications": [serialize_job_application(item, request) for item in applications]})
+
+    company_name = (request.POST.get("company_name") or "").strip()
+    company_image = request.FILES.get("company_image")
+    if not company_name:
+        return JsonResponse({"error": "Company name is required."}, status=400)
+    if company_image:
+        if not (company_image.content_type or "").lower().startswith("image/"):
+            return JsonResponse({"error": "Company image must be an image file."}, status=400)
+        if company_image.size > MAX_FILE_SIZE:
+            return JsonResponse({"error": "Company image must be 10 MB or smaller."}, status=400)
+        try:
+            image = Image.open(company_image)
+            image.verify()
+            company_image.seek(0)
+        except Exception:
+            return JsonResponse({"error": "The uploaded company image is invalid."}, status=400)
+    application = JobApplication.objects.create(
+        company_name=company_name[:200],
+        company_image=company_image,
+        company_description=(request.POST.get("company_description") or "").strip(),
+        job_post_link=(request.POST.get("job_post_link") or "").strip(),
+        job_description=(request.POST.get("job_description") or "").strip(),
+    )
+    company_id = (request.POST.get("company_id") or "").strip()
+    if company_id:
+        try:
+            company = Company.objects.get(id=company_id)
+        except (Company.DoesNotExist, ValueError):
+            return JsonResponse({"error": "The selected company was not found."}, status=400)
+    else:
+        company, _ = Company.objects.get_or_create(name=application.company_name)
+    company_description = application.company_description
+    if company_description:
+        company.summary = company_description
+    if application.company_image:
+        company.brand_image_url = request.build_absolute_uri(application.company_image.url)
+    company.save(update_fields=["summary", "brand_image_url", "updated_at"])
+    return JsonResponse(serialize_job_application(application, request), status=201)
+
+@csrf_exempt
+@require_http_methods(["POST", "DELETE"])
+def job_application_detail(request, application_id):
+    try:
+        application = JobApplication.objects.get(id=application_id)
+    except (JobApplication.DoesNotExist, ValueError):
+        return JsonResponse({"error": "Job application was not found."}, status=404)
+    if request.method == "DELETE":
+        application.delete()
+        return JsonResponse({"ok": True})
+
+    company_name = (request.POST.get("company_name") or "").strip()
+    company_image = request.FILES.get("company_image")
+    if not company_name:
+        return JsonResponse({"error": "Company name is required."}, status=400)
+    if company_image:
+        if not (company_image.content_type or "").lower().startswith("image/"):
+            return JsonResponse({"error": "Company image must be an image file."}, status=400)
+        if company_image.size > MAX_FILE_SIZE:
+            return JsonResponse({"error": "Company image must be 10 MB or smaller."}, status=400)
+        try:
+            image = Image.open(company_image)
+            image.verify()
+            company_image.seek(0)
+        except Exception:
+            return JsonResponse({"error": "The uploaded company image is invalid."}, status=400)
+
+    application.company_name = company_name[:200]
+    application.company_description = (request.POST.get("company_description") or "").strip()
+    application.job_post_link = (request.POST.get("job_post_link") or "").strip()
+    application.job_description = (request.POST.get("job_description") or "").strip()
+    if company_image:
+        application.company_image = company_image
+    application.save()
+
+    company, _ = Company.objects.get_or_create(name=application.company_name)
+    if application.company_description:
+        company.summary = application.company_description
+    if application.company_image:
+        company.brand_image_url = request.build_absolute_uri(application.company_image.url)
+    company.save(update_fields=["summary", "brand_image_url", "updated_at"])
+    return JsonResponse(serialize_job_application(application, request))
 
 @csrf_exempt
 @require_http_methods(["GET", "POST", "PATCH", "DELETE"])
@@ -276,7 +438,7 @@ def companies(request):
             return JsonResponse({"error": "Selected companies were not found."}, status=404)
         prompt = [{"role": "system", "content": "You merge job-search company profiles. Identify records that refer to the same real company, including subsidiaries, brand variants, abbreviations, and spelling variations. Do not merge genuinely different companies. Return ONLY JSON in this shape: {\"groups\":[{\"name\":\"canonical name\",\"aliases\":[],\"website\":\"\",\"linkedin_url\":\"\",\"brand_image_url\":\"\",\"industry\":\"\",\"size\":\"\",\"location\":\"\",\"summary\":\"complete merged summary\",\"source_company_ids\":[],\"facts\":[{\"category\":\"\",\"fact\":\"\",\"source\":\"\",\"confidence\":\"\"}],\"employees\":[{\"name\":\"\",\"title\":\"\",\"linkedin_url\":\"\",\"notes\":\"\",\"source\":\"\"}]}]}. Preserve every distinct fact, employee, and source URL. Do not invent data."}, {"role": "user", "content": json.dumps(company_data, ensure_ascii=False)}]
         try:
-            response = requests.post(f"{settings.MIRZA_BASE_URL.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {settings.MIRZA_API_KEY}", "Content-Type": "application/json"}, json={"model": "sub-gpt-5.6-luna", "messages": prompt}, timeout=120)
+            response = ai_completion(request, {"model": "sub-gpt-5.6-luna", "messages": prompt}, timeout=120)
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"]
             match = re.search(r"\{[\s\S]*\}", raw)
@@ -297,9 +459,32 @@ def companies(request):
         query = (request.GET.get("q") or "").strip()
         items = Company.objects.filter(name__icontains=query).order_by("name")[:50] if query else Company.objects.order_by("-updated_at")[:50]
         return JsonResponse({"companies": [serialize_company(c) for c in items]})
-    body = json.loads(request.body or "{}"); name = (body.get("name") or "").strip()
+    body = request.POST if request.content_type.startswith("multipart/form-data") else json.loads(request.body or "{}")
+    name = (body.get("name") or "").strip()
     if not name: return JsonResponse({"error": "Company name is required."}, status=400)
-    company = Company.objects.create(name=name, aliases=body.get("aliases", []), website=body.get("website", ""), linkedin_url=body.get("linkedin_url", ""), industry=body.get("industry", ""), size=body.get("size", ""), location=body.get("location", ""), summary=body.get("summary", ""))
+    aliases = body.get("aliases", [])
+    if isinstance(aliases, str):
+        aliases = [item.strip() for item in aliases.split(",") if item.strip()]
+    company = Company.objects.create(name=name, aliases=aliases, website=body.get("website", ""), linkedin_url=body.get("linkedin_url", ""), industry=body.get("industry", ""), size=body.get("size", ""), location=body.get("location", ""), summary=body.get("summary", ""))
+    uploaded = request.FILES.get("brand_image")
+    if uploaded:
+        content_type = (uploaded.content_type or "").lower()
+        if not content_type.startswith("image/") or uploaded.size > 10 * 1024 * 1024:
+            company.delete()
+            return JsonResponse({"error": "Company image must be a valid image of 10 MB or smaller."}, status=400)
+        try:
+            image = Image.open(uploaded)
+            image.verify()
+            uploaded.seek(0)
+            image = Image.open(uploaded).convert("RGBA")
+            output = BytesIO()
+            image.save(output, format="PNG", optimize=True)
+            saved_path = default_storage.save(f"company-logos/{uuid.uuid4()}.png", ContentFile(output.getvalue()))
+            company.brand_image_url = request.build_absolute_uri(f"{settings.MEDIA_URL}{saved_path}")
+            company.save(update_fields=["brand_image_url", "updated_at"])
+        except Exception:
+            company.delete()
+            return JsonResponse({"error": "The uploaded company image is invalid."}, status=400)
     return JsonResponse(serialize_company(company), status=201)
 
 @csrf_exempt
@@ -309,25 +494,31 @@ def company_detail(request, company_id):
     if request.method == "DELETE": company.delete(); return JsonResponse({"ok": True})
     if request.method == "POST":
         uploaded = request.FILES.get("logo")
-        if not uploaded:
-            return JsonResponse({"error": "A logo image is required."}, status=400)
-        content_type = (uploaded.content_type or "").lower()
-        if not content_type.startswith("image/"):
-            return JsonResponse({"error": "Logo must be an image file."}, status=400)
-        if uploaded.size > 10 * 1024 * 1024:
-            return JsonResponse({"error": "Logo must be 10 MB or smaller."}, status=400)
-        try:
-            image = Image.open(uploaded)
-            image.verify()
-            uploaded.seek(0)
-            image = Image.open(uploaded).convert("RGBA")
-            output = BytesIO()
-            image.save(output, format="PNG", optimize=True)
-            saved_path = default_storage.save(f"company-logos/{uuid.uuid4()}.png", ContentFile(output.getvalue()))
-        except Exception:
-            return JsonResponse({"error": "The uploaded file is not a valid image."}, status=400)
-        company.brand_image_url = f"{settings.MEDIA_URL}{saved_path}"
-        company.save(update_fields=["brand_image_url", "updated_at"])
+        if request.POST.get("name") is not None:
+            name = request.POST.get("name", "").strip()
+            if not name:
+                return JsonResponse({"error": "Company name is required."}, status=400)
+            company.name = name[:200]
+        if request.POST.get("summary") is not None:
+            company.summary = request.POST.get("summary", "").strip()
+        if uploaded:
+            content_type = (uploaded.content_type or "").lower()
+            if not content_type.startswith("image/"):
+                return JsonResponse({"error": "Logo must be an image file."}, status=400)
+            if uploaded.size > 10 * 1024 * 1024:
+                return JsonResponse({"error": "Logo must be 10 MB or smaller."}, status=400)
+            try:
+                image = Image.open(uploaded)
+                image.verify()
+                uploaded.seek(0)
+                image = Image.open(uploaded).convert("RGBA")
+                output = BytesIO()
+                image.save(output, format="PNG", optimize=True)
+                saved_path = default_storage.save(f"company-logos/{uuid.uuid4()}.png", ContentFile(output.getvalue()))
+            except Exception:
+                return JsonResponse({"error": "The uploaded file is not a valid image."}, status=400)
+            company.brand_image_url = request.build_absolute_uri(f"{settings.MEDIA_URL}{saved_path}")
+        company.save()
         return JsonResponse(serialize_company(company))
     if request.method == "PATCH":
         body = json.loads(request.body or "{}")
@@ -435,7 +626,7 @@ def generated_files(text):
     return files
 
 def serialize_conversation(c):
-    return {"id": str(c.id), "title": c.title, "model": c.model, "updated_at": c.updated_at.isoformat(), "messages": [{"id": m.id, "role": m.role, "content": m.content} for m in c.messages.order_by("created_at")]}
+    return {"id": str(c.id), "title": c.title, "model": c.model, "updated_at": c.updated_at.isoformat(), "messages": [{"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at.isoformat()} for m in c.messages.order_by("created_at")]}
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
@@ -447,20 +638,27 @@ def conversations(request):
     return JsonResponse({"conversations": [serialize_conversation(c) for c in Conversation.objects.order_by("-updated_at")[:50]]})
 
 @csrf_exempt
-@require_http_methods(["GET", "DELETE"])
+@require_http_methods(["GET", "PATCH", "DELETE"])
 def conversation_detail(request, conversation_id):
     c = Conversation.objects.get(id=conversation_id)
     if request.method == "DELETE":
         c.delete()
         return JsonResponse({"ok": True})
+    if request.method == "PATCH":
+        body = json.loads(request.body or "{}")
+        title = (body.get("title") or "").strip()
+        if not title:
+            return JsonResponse({"error": "Title is required"}, status=400)
+        c.title = title[:200]
+        c.save(update_fields=["title", "updated_at"])
+        return JsonResponse(serialize_conversation(c))
     return JsonResponse(serialize_conversation(c))
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def chat(request):
-    if not settings.MIRZA_API_KEY or settings.MIRZA_API_KEY == "replace-with-your-key":
-        return JsonResponse({"error": "MIRZA_API_KEY is not configured. Set a valid key in .env and restart Django."}, status=500)
     try:
+        ai_url, ai_token = ai_configuration(request)
         body = request.POST if request.content_type.startswith("multipart/form-data") else json.loads(request.body or "{}")
         text = (body.get("message") or "").strip(); model = body.get("model", "sub-gpt-5.6-luna")
         uploaded_files = request.FILES.getlist("files")
@@ -490,9 +688,10 @@ def chat(request):
             attachment_parts.extend(stored_file_parts(stored))
         Message.objects.create(conversation=c, role="user", content=text)
         messages = [{"role": m.role, "content": m.content} for m in c.messages.order_by("created_at")]
+        file_instruction = None
         if attachment_parts:
             messages[-1]["content"] = [{"type": "text", "text": text}] + attachment_parts
-            messages.append({"role": "system", "content": "When the user asks you to create a file, return it in this exact format: ```file: filename.ext\\nfile contents\\n``` . You may include multiple file blocks. Keep normal explanation outside file blocks."})
+            file_instruction = "When the user asks you to create a file, return it in this exact format: ```file: filename.ext\\nfile contents\\n``` . You may include multiple file blocks. Keep normal explanation outside file blocks."
         fetched_urls = url_context(text)
         if fetched_urls:
             messages[-1]["content"] = [{"type": "text", "text": text + "\n\nPublic URL context:\n" + fetched_urls}] if isinstance(messages[-1]["content"], str) else [{"type": "text", "text": text + "\n\nPublic URL context:\n" + fetched_urls}] + messages[-1]["content"][1:]
@@ -506,9 +705,6 @@ def chat(request):
                 content_parts.append({"type": "image_url", "image_url": {"url": screenshot}})
             messages[-1]["content"] = content_parts if isinstance(messages[-1]["content"], str) else [{"type": "text", "text": text}, *content_parts, *messages[-1]["content"][1:]]
         current_memory = memory_context()
-        if current_memory:
-            messages.insert(0, {"role": "system", "content": "Known user memory. Use it only when relevant:\n" + current_memory})
-        messages.insert(0, {"role": "system", "content": "If the user explicitly asks you to remember a personal fact, preference, experience, goal, or job-search constraint, return it in this exact format so it can be saved in Personal Memory: ```memory: Short title\\nThe durable personal fact or goal to remember.\\n``` . Do not put company facts, job-posting facts, employee information, or website research in Personal Memory; those belong in the company profile."})
         known_companies = "\n".join(f"- {company.name}: {company.summary}" for company in Company.objects.exclude(summary="").order_by("-updated_at")[:30])
         company_instruction = '''You are a job-search assistant. Infer the user's intent from their message and the attached URL context. A shared page may be a job posting, company page, employee profile, article, or research source; do not assume the user wants a summary unless they ask for one. Answer the actual request using the page content. When the user provides substantial company information, preserve it in this exact format:
 ```company: Company Name
@@ -516,16 +712,30 @@ def chat(request):
 ```
 Preserve facts, update existing companies, and do not invent information. Known company summaries:
 ''' + known_companies
-        messages.insert(0, {"role": "system", "content": company_instruction})
+        system_instructions = [
+            company_instruction,
+            "If the user explicitly asks you to remember a personal fact, preference, experience, goal, or job-search constraint, return it in this exact format so it can be saved in Personal Memory: ```memory: Short title\\nThe durable personal fact or goal to remember.\\n``` . Do not put company facts, job-posting facts, employee information, or website research in Personal Memory; those belong in the company profile.",
+        ]
+        if current_memory:
+            system_instructions.append("Known user memory. Use it only when relevant:\n" + current_memory)
+        if file_instruction:
+            system_instructions.append(file_instruction)
+        existing_system_instructions = [
+            message["content"] for message in messages if message.get("role") == "system"
+        ]
+        messages = [
+            {"role": "system", "content": "\n\n".join(existing_system_instructions + system_instructions)},
+            *[message for message in messages if message.get("role") != "system"],
+        ]
         def event(payload):
             return json.dumps(payload, ensure_ascii=False) + "\n"
 
         def stream_answer():
             answer_parts = []
             try:
-                response = requests.post(f"{settings.MIRZA_BASE_URL.rstrip('/')}/chat/completions", headers={"Authorization": f"Bearer {settings.MIRZA_API_KEY}", "Content-Type": "application/json"}, json={"model": model, "messages": messages, "stream": True}, timeout=120, stream=True)
+                response = requests.post(f"{ai_url}/chat/completions", headers={"Authorization": f"Bearer {ai_token}", "Content-Type": "application/json"}, json={"model": model, "messages": messages, "stream": True}, timeout=120, stream=True)
                 if response.status_code == 401:
-                    yield event({"type": "error", "error": "Mirza rejected the API key (401). Check MIRZA_API_KEY in .env and restart Django."}); return
+                    yield event({"type": "error", "error": "The AI provider rejected the API token (401). Check your AI settings."}); return
                 response.raise_for_status()
                 for line in response.iter_lines(decode_unicode=True):
                     if not line: continue

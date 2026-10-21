@@ -68,6 +68,16 @@ class CompanyEmployee(models.Model):
     source = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+class JobApplication(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company_name = models.CharField(max_length=200)
+    company_image = models.ImageField(upload_to="job-tracker/", blank=True)
+    company_description = models.TextField(blank=True)
+    job_post_link = models.URLField(max_length=2048, blank=True)
+    job_description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
 class Conversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200, default="New conversation")
