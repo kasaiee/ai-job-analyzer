@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {ArrowDown, ArrowUp, ArrowUpDown, Clock3, Download, Folder as FolderIcon, LayoutGrid, List, Plus, Trash2} from 'lucide-react';
+import {ArrowDown, ArrowUp, ArrowUpDown, Clock3, Download, FilePenLine, Folder as FolderIcon, LayoutGrid, List, Plus, Trash2} from 'lucide-react';
 import Button from '../atoms/Button';
 import FileTypeIcon, {isImageFile, isPdfFile} from '../atoms/FileTypeIcon';
 import ViewToggle from '../atoms/ViewToggle';
@@ -13,15 +13,16 @@ const FilePreview = ({file, t}) => (
   </div>
 );
 
-const DriveActions = ({file, onAddToChat, onDownload, onDelete, t}) => (
+const DriveActions = ({file, onAddToChat, onDescribe, onDownload, onDelete, t}) => (
   <span className="drive-actions">
     <Button type="button" title={t('addToChat')} aria-label={t('addNamedToChat', {name: file.name})} onClick={event => {event.stopPropagation(); onAddToChat(file)}}><Plus size={16}/></Button>
     <Button type="button" title={t('download')} aria-label={t('downloadNamed', {name: file.name})} onClick={event => {event.stopPropagation(); onDownload(file)}}><Download size={16}/></Button>
+    <Button type="button" title={t('editDescription')} aria-label={t('describeNamed', {name: file.name})} onClick={event => {event.stopPropagation(); onDescribe(file, 'file')}}><FilePenLine size={16}/></Button>
     <Button type="button" variant="danger" iconOnly title={t('delete')} aria-label={t('deleteNamed', {name: file.name})} onClick={event => {event.stopPropagation(); onDelete(file)}}><Trash2 size={16}/></Button>
   </span>
 );
 
-const DriveList = ({folders, files, view, onViewChange, onOpenFolder, onSelectFile, onBulkAddToChat, onDownload, onDeleteFolder, onDeleteFile, onBulkDelete}) => {
+const DriveList = ({folders, files, view, onViewChange, onOpenFolder, onSelectFile, onAddFolderToChat, onDescribe, onBulkAddToChat, onDownload, onDeleteFolder, onDeleteFile, onBulkDelete}) => {
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const [sort, setSort] = useState({key: 'name', direction: 'asc'});
@@ -78,26 +79,26 @@ const DriveList = ({folders, files, view, onViewChange, onOpenFolder, onSelectFi
     <div className={view === 'cards' ? 'drive-cards' : 'drive-list'} role="list" aria-label={t('driveFiles')}>
       {view === 'list' && <div className="drive-list-header"><input ref={input => {if(input)input.indeterminate=selectedCount>0&&selectedCount<itemCount}} className="drive-file-checkbox" type="checkbox" checked={itemCount>0&&selectedCount===itemCount} disabled={!itemCount} onChange={toggleAll} aria-label={t('selectAll')}/><Button type="button" className="drive-sort-button" onClick={() => changeSort('name')} aria-label={t('sortByName')} aria-pressed={sort.key === 'name'}>{t('name')}<SortIcon column="name"/></Button><Button type="button" className="drive-sort-button" onClick={() => changeSort('date')} aria-label={t('sortByDate')} aria-pressed={sort.key === 'date'}>{t('added')}<SortIcon column="date"/></Button><span className="drive-actions-heading">{t('actions')}</span></div>}
       {(view === 'list' ? sortedFolders : folders).map(folder => view === 'cards' ? (
-        <button className="drive-card" key={folder.id} type="button" onDoubleClick={() => onOpenFolder(folder.id)} title={t('openFolder')}>
-          <span className="drive-card-icon"><FolderIcon size={28} strokeWidth={1.8}/></span><span className="drive-card-name">{folder.name}</span><small>{t('folder')}</small>
-        </button>
+        <article className="drive-card folder-card" key={folder.id} role="button" tabIndex="0" onDoubleClick={() => onOpenFolder(folder.id)} onKeyDown={event=>{if(event.key==='Enter'){onOpenFolder(folder.id)}}} title={t('openFolder')}>
+          <span className="drive-card-icon"><FolderIcon size={28} strokeWidth={1.8}/></span><span className="drive-card-name">{folder.name}</span>{folder.description&&<span className="drive-item-description">{folder.description}</span>}<small>{t('folder')}</small><span className="folder-card-actions"><Button type="button" title={t('addFolderToChat')} aria-label={t('addFolderNamedToChat',{name:folder.name})} onClick={event=>{event.stopPropagation();onAddFolderToChat(folder)}}><Plus size={15}/></Button><Button type="button" title={t('editDescription')} aria-label={t('describeNamed',{name:folder.name})} onClick={event=>{event.stopPropagation();onDescribe(folder,'folder')}}><FilePenLine size={15}/></Button></span>
+        </article>
       ) : (
         <div className="drive-list-row drive-folder-row" key={folder.id} role="button" tabIndex="0" onDoubleClick={() => onOpenFolder(folder.id)} onKeyDown={event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); onOpenFolder(folder.id);}}} title={t('openFolder')}>
-          <input className="drive-file-checkbox" type="checkbox" checked={selectedFolderIds.includes(folder.id)} onChange={() => toggleFolder(folder.id)} onClick={event => event.stopPropagation()} aria-label={t('selectNamed', {name: folder.name})}/><span className="drive-list-main"><FolderIcon className="drive-list-icon folder-icon" size={20}/><span className="drive-list-name">{folder.name}</span></span><span className="drive-list-type"><Clock3 size={14}/> {formatFileTime(folder.created_at)}</span>
-          <Button type="button" variant="danger" iconOnly title={t('delete')} aria-label={t('deleteNamed', {name: folder.name})} onClick={event => {event.stopPropagation(); onDeleteFolder(folder)}}><Trash2 size={16}/></Button>
+          <input className="drive-file-checkbox" type="checkbox" checked={selectedFolderIds.includes(folder.id)} onChange={() => toggleFolder(folder.id)} onClick={event => event.stopPropagation()} aria-label={t('selectNamed', {name: folder.name})}/><span className="drive-list-main"><FolderIcon className="drive-list-icon folder-icon" size={20}/><span className="drive-list-label"><span className="drive-list-name">{folder.name}</span>{folder.description&&<small>{folder.description}</small>}</span></span><span className="drive-list-type"><Clock3 size={14}/> {formatFileTime(folder.created_at)}</span>
+          <span className="drive-actions"><Button type="button" title={t('addFolderToChat')} aria-label={t('addFolderNamedToChat',{name:folder.name})} onClick={event=>{event.stopPropagation();onAddFolderToChat(folder)}}><Plus size={16}/></Button><Button type="button" title={t('editDescription')} aria-label={t('describeNamed',{name:folder.name})} onClick={event=>{event.stopPropagation();onDescribe(folder,'folder')}}><FilePenLine size={16}/></Button><Button type="button" variant="danger" iconOnly title={t('delete')} aria-label={t('deleteNamed', {name: folder.name})} onClick={event => {event.stopPropagation(); onDeleteFolder(folder)}}><Trash2 size={16}/></Button></span>
         </div>
       ))}
       {(view === 'list' ? sortedFiles : files).map(file => view === 'cards' ? (
         <article className="drive-card file-card" key={file.id} role="listitem">
           <input className="drive-file-checkbox" type="checkbox" checked={selectedFileIds.includes(file.id)} onChange={() => toggleFile(file.id)} aria-label={t('selectNamed', {name: file.name})}/>
-          <div className="drive-card-content"><FilePreview file={file} t={t}/><strong className="drive-card-name">{file.name}</strong><small><Clock3 size={13}/> {formatFileTime(file.created_at)}</small></div>
-          <DriveActions file={file} onAddToChat={onSelectFile} onDownload={onDownload} onDelete={onDeleteFile} t={t}/>
+           <div className="drive-card-content"><FilePreview file={file} t={t}/><strong className="drive-card-name">{file.name}</strong>{file.description&&<span className="drive-item-description">{file.description}</span>}<small><Clock3 size={13}/> {formatFileTime(file.created_at)}</small></div>
+           <DriveActions file={file} onAddToChat={onSelectFile} onDescribe={onDescribe} onDownload={onDownload} onDelete={onDeleteFile} t={t}/>
         </article>
       ) : (
         <div className="drive-list-row" key={file.id} role="listitem">
           <input className="drive-file-checkbox" type="checkbox" checked={selectedFileIds.includes(file.id)} onChange={() => toggleFile(file.id)} aria-label={t('selectNamed', {name: file.name})}/>
-          <div className="drive-list-main"><FileTypeIcon file={file} className="drive-list-icon" size={20}/><span className="drive-list-name">{file.name}</span></div><span className="drive-list-type"><Clock3 size={14}/> {formatFileTime(file.created_at)}</span>
-          <DriveActions file={file} onAddToChat={onSelectFile} onDownload={onDownload} onDelete={onDeleteFile} t={t}/>
+           <div className="drive-list-main"><FileTypeIcon file={file} className="drive-list-icon" size={20}/><span className="drive-list-label"><span className="drive-list-name">{file.name}</span>{file.description&&<small>{file.description}</small>}</span></div><span className="drive-list-type"><Clock3 size={14}/> {formatFileTime(file.created_at)}</span>
+           <DriveActions file={file} onAddToChat={onSelectFile} onDescribe={onDescribe} onDownload={onDownload} onDelete={onDeleteFile} t={t}/>
         </div>
       ))}
       {!folders.length && !files.length && <p className="drive-list-empty">{t('emptyFolder')}</p>}

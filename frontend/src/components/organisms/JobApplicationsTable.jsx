@@ -1,10 +1,10 @@
 import React from 'react';
-import {ArrowDown, ArrowUp, ArrowUpDown, Trash2} from 'lucide-react';
+import {ArrowDown, ArrowUp, ArrowUpDown, Brain, Edit3, Trash2} from 'lucide-react';
 import Button from '../atoms/Button';
 import CompanyLogo from '../atoms/CompanyLogo';
 import {useLanguage} from '../../templates/LanguageProvider';
 
-const JobApplicationsTable = ({applications, sort, selectedIds, onSelectionChange, onSort, onEdit, onDelete}) => {
+const JobApplicationsTable = ({applications, sort, selectedIds, onSelectionChange, onSort, onEdit, onAnalysis, onDelete}) => {
   const {t, formatDate} = useLanguage();
   const allSelected = applications.length > 0 && applications.every(application => selectedIds.includes(application.id));
 
@@ -30,6 +30,8 @@ const JobApplicationsTable = ({applications, sort, selectedIds, onSelectionChang
           <th><Button type="button" className="table-sort-button" onClick={() => onSort('company')} aria-label={t('sortByCompany')} aria-pressed={sort.key === 'company'}>{t('company')}<SortIcon column="company"/></Button></th>
           <th>{t('jobPost')}</th>
           <th><Button type="button" className="table-sort-button" onClick={() => onSort('date')} aria-label={t('sortByAddedDate')} aria-pressed={sort.key === 'date'}>{t('added')}<SortIcon column="date"/></Button></th>
+          <th>{t('edit')}</th>
+          <th>{t('aiAnalysis')}</th>
           <th aria-label={t('actions')}></th>
         </tr></thead>
         <tbody>{applications.map(application => <tr key={application.id} onClick={() => onEdit(application)} tabIndex="0" onKeyDown={event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); onEdit(application);}}}>
@@ -39,6 +41,8 @@ const JobApplicationsTable = ({applications, sort, selectedIds, onSelectionChang
           <td><span className="table-company"><CompanyLogo name={application.company_name} src={application.company_image_url}/><b>{application.company_name}</b></span></td>
           <td>{application.job_post_link ? <a href={application.job_post_link} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()}>{t('viewJobPost')}</a> : '—'}</td>
           <td>{formatDate(application.created_at)}</td>
+          <td><Button type="button" className="job-table-link" onClick={event => {event.stopPropagation(); onEdit(application);}}><Edit3 size={15}/> {t('edit')}</Button></td>
+          <td><Button type="button" className="job-table-link" onClick={event => {event.stopPropagation(); onAnalysis(application);}}><Brain size={15}/> {t('viewAiResult')}</Button></td>
           <td><Button variant="danger" iconOnly type="button" onClick={event => {event.stopPropagation(); onDelete(application.id);}} aria-label={t('deleteCompanyJob', {name: application.company_name})} title={t('deleteJobApplication')}><Trash2 size={16}/></Button></td>
         </tr>)}</tbody>
       </table>

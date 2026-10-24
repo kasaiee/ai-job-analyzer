@@ -4,12 +4,14 @@ from django.db import models
 class Folder(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
     parent = models.ForeignKey("self", null=True, blank=True, related_name="children", on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class StoredFile(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
     file = models.FileField(upload_to="drive/")
     mime_type = models.CharField(max_length=150, blank=True)
     size = models.PositiveBigIntegerField(default=0)
@@ -75,8 +77,33 @@ class JobApplication(models.Model):
     company_description = models.TextField(blank=True)
     job_post_link = models.URLField(max_length=2048, blank=True)
     job_description = models.TextField(blank=True)
+    tailored_resume_text = models.TextField(blank=True)
+    ai_analysis = models.TextField(blank=True)
+    ai_analyzed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+class ResumeProfile(models.Model):
+    name = models.CharField(max_length=200, default="Default resume")
+    resume_text = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class TailoredResumeVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_application = models.ForeignKey(JobApplication, related_name="resume_versions", on_delete=models.CASCADE)
+    version_number = models.PositiveIntegerField()
+    name = models.CharField(max_length=200)
+    resume_data = models.JSONField(default=dict)
+    page_size = models.CharField(max_length=10, default="A4")
+    model = models.CharField(max_length=100, blank=True)
+    is_current = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["job_application", "version_number"], name="unique_job_resume_version"),
+        ]
 
 class Conversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -1,1 +1,16 @@
-<div id="root"></div><script type="module" src="/src/main.jsx"></script>
+<script>
+  (() => {
+    try {
+      const settings = JSON.parse(localStorage.getItem('mirza-settings') || '{}');
+      const darkSystem = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = settings.theme === 'dark' || settings.theme === 'light'
+        ? settings.theme
+        : (darkSystem ? 'dark' : 'light');
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    } catch {
+      document.documentElement.dataset.theme = 'light';
+      document.documentElement.style.colorScheme = 'light';
+    }
+  })();
+</script><div id="root"></div><script type="module" src="/src/main.jsx"></script>
