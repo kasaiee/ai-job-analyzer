@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import requests
 from django.test import SimpleTestCase, TestCase
 
-from .models import Folder, MemoryNode, StoredFile
+from .models import Folder, JobApplication, MemoryNode, StoredFile
 from .views import (
     ai_analysis_completion,
     parse_analysis_json,
@@ -259,6 +259,50 @@ class JobAnalysisValidationTests(SimpleTestCase):
         self.assertEqual(completion.call_count, 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 3])
         curl_completion.assert_called_once_with(request, payload)
+
+
+class JobAnalysisMemoryTests(TestCase):
+    def setUp(self):
+        self.application = JobApplication.objects.create(
+            company_name="Acme",
+            job_description="Build and maintain Python services.",
+        )
+        self.analysis_url = f"/api/job-applications/{self.application.id}/analysis/"
+
+    @patch("chat.views.ai_analysis_completion", side_effect=requests.Timeout)
+    def test_allows_job_only_analysis_when_resume_and_memory_are_empty(self, completion):
+        response = self.client.post(
+            self.analysis_url,
+            data=json.dumps({"model": "test-model"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 504)
+        payload = completion.call_args.args[1]
+        candidate_input = payload["messages"][1]["content"]
+        self.assertTrue(candidate_input.startswith("CANDIDATE_BACKGROUND"))
+        self.assertIn("If CANDIDATE_BACKGROUND is empty", candidate_input)
+
+    @patch("chat.views.ai_analysis_completion", side_effect=requests.Timeout)
+    def test_uses_personal_memory_when_resume_is_empty(self, completion):
+        MemoryNode.objects.create(
+            name="Backend experience",
+            content="Built Python services for four years.",
+            is_leaf=True,
+        )
+
+        response = self.client.post(
+            self.analysis_url,
+            data=json.dumps({"model": "test-model"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 504)
+        payload = completion.call_args.args[1]
+        candidate_input = payload["messages"][1]["content"]
+        self.assertTrue(candidate_input.startswith("CANDIDATE_BACKGROUND"))
+        self.assertIn("Built Python services for four years.", candidate_input)
+        self.assertIn("Build and maintain Python services.", candidate_input)
 
 
 class TailoredResumeValidationTests(SimpleTestCase):

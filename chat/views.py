@@ -606,7 +606,6 @@ def job_applications(request):
         company_description=(request.POST.get("company_description") or "").strip(),
         job_post_link=(request.POST.get("job_post_link") or "").strip(),
         job_description=(request.POST.get("job_description") or "").strip(),
-        tailored_resume_text=(request.POST.get("tailored_resume_text") or "").strip(),
     )
     company_id = (request.POST.get("company_id") or "").strip()
     if company_id:
@@ -655,7 +654,6 @@ def job_application_detail(request, application_id):
     application.company_description = (request.POST.get("company_description") or "").strip()
     application.job_post_link = (request.POST.get("job_post_link") or "").strip()
     application.job_description = (request.POST.get("job_description") or "").strip()
-    application.tailored_resume_text = (request.POST.get("tailored_resume_text") or "").strip()
     if company_image:
         application.company_image = company_image
     application.save()
@@ -668,7 +666,7 @@ def job_application_detail(request, application_id):
     company.save(update_fields=["summary", "brand_image_url", "updated_at"])
     return JsonResponse(serialize_job_application(application, request))
 
-JOB_ANALYSIS_PROMPT = '''You are an expert technical recruiter, ATS optimization specialist, and career analyst. Compare RESUME_TEXT against JOB_DESCRIPTION_TEXT, conduct a critical resume audit, reason internally, then return ONLY valid JSON without Markdown fences or surrounding prose.
+JOB_ANALYSIS_PROMPT = '''You are an expert technical recruiter, ATS optimization specialist, and career analyst. Compare the candidate evidence against JOB_DESCRIPTION_TEXT, conduct a critical resume audit, reason internally, then return ONLY valid JSON without Markdown fences or surrounding prose. Candidate evidence is provided as either RESUME_TEXT or CANDIDATE_BACKGROUND. CANDIDATE_BACKGROUND contains the candidate's Personal Memory and is the primary matching evidence when RESUME_TEXT is absent.
 
 Extract job title, seniority, location/remote policy, required/preferred skills, experience, responsibilities, soft skills, technology stack, degree requirements, and deal-breakers. Extract candidate identity/contact details, experience, skills, work history, education, certifications, projects, achievements, and resume word count. For every requirement classify resume evidence as MATCHED, PARTIAL, or MISSING. Audit title and degree alignment, length, contact details, quantified accomplishments, buzzwords, weak verbs, first-person language, and date consistency. Because the input is plain text, mark general_formatting NOT_ASSESSABLE unless reliable formatting evidence is present. Never invent evidence. Keep evidence quotations faithful and no longer than 20 words. SUPPLEMENTAL_MEMORY is not part of the resume: never use it as match evidence or to raise scores. It may only inform gap mitigation and interview preparation, explicitly described as outside-resume context.
 
@@ -687,7 +685,7 @@ Score conservatively from 0 to 100. Overall match weights are skills .35, experi
   "keyword_coverage":{"matched_keywords":["string"],"missing_keywords":["string"],"coverage_percent":0},
   "visualization_hints":{"highlight_color_theme":"green_amber_red","primary_chart":"radar","secondary_charts":["score_bars","skill_status_donut","timeline","keyword_heatmap","hard_skills_bar_chart","soft_skills_bar_chart","other_skills_bar_chart"],"show_gauge_for_overall":true,"render_resume_audit_as_checklist":true}
 }
-If either input is empty or unreadable, return only {"error":"UNREADABLE_INPUT","details":"what is wrong"}.'''
+If JOB_DESCRIPTION_TEXT is empty or unreadable, return only {"error":"UNREADABLE_INPUT","details":"what is wrong"}. If candidate evidence is empty, still return the complete analysis structure. Treat every unsupported candidate requirement as MISSING, score conservatively, leave evidence empty, and explain that candidate evidence is unavailable. Never invent candidate facts.'''
 
 ANALYSIS_ENUMS = {
     "verdict": {"STRONG_MATCH", "GOOD_MATCH", "PARTIAL_MATCH", "WEAK_MATCH", "NOT_A_MATCH"},
@@ -820,21 +818,33 @@ def job_application_analysis(request, application_id):
     resume_text = application.tailored_resume_text.strip() or (profile.resume_text.strip() if profile else "")
     personal_memory = memory_context().strip()
     job_description = application.job_description.strip()
-    if not resume_text:
-        return JsonResponse({"error": "UNREADABLE_INPUT", "details": "Resume text is empty. Add a default resume or a tailored resume before analyzing."}, status=400)
     if not job_description:
         return JsonResponse({"error": "UNREADABLE_INPUT", "details": "The saved job description is empty."}, status=400)
     job_text = f"Company: {application.company_name}\nCompany description: {application.company_description}\nJob post: {application.job_post_link}\nJob description:\n{job_description}"
+    if resume_text:
+        candidate_input = f"RESUME_TEXT:\n{resume_text}\n\nJOB_DESCRIPTION_TEXT:\n{job_text}\n\nSUPPLEMENTAL_MEMORY (recommendations only; never evidence):\n{personal_memory or 'None'}"
+        audit_resume_text = resume_text
+    else:
+        candidate_input = (
+            f"CANDIDATE_BACKGROUND (no resume document was provided; these facts come from the candidate's Personal Memory):\n{personal_memory}\n\n"
+            f"JOB_DESCRIPTION_TEXT:\n{job_text}\n\n"
+            "SPECIAL_RULES: There is no RESUME_TEXT in this analysis, so the rule about SUPPLEMENTAL_MEMORY does not apply: "
+            "use CANDIDATE_BACKGROUND as the evidence source for matching, skills, experience, and the resume audit. "
+            "Where a detail cannot be verified from the background text (word count, contact details, formatting-related audits), report that honestly instead of guessing. "
+            "If CANDIDATE_BACKGROUND is empty, produce a conservative job-only baseline: mark unsupported candidate requirements MISSING, "
+            "use empty evidence, assign zero candidate scores where appropriate, and do not return UNREADABLE_INPUT."
+        )
+        audit_resume_text = None
     prompt = [
         {"role": "system", "content": JOB_ANALYSIS_PROMPT},
-        {"role": "user", "content": f"RESUME_TEXT:\n{resume_text}\n\nJOB_DESCRIPTION_TEXT:\n{job_text}\n\nSUPPLEMENTAL_MEMORY (recommendations only; never evidence):\n{personal_memory or 'None'}"},
+        {"role": "user", "content": candidate_input},
     ]
     try:
         body = json.loads(request.body or "{}")
         model = body.get("model") or "sub-gpt-5.6-luna"
         response = ai_analysis_completion(request, {"model": model, "messages": prompt})
         response.raise_for_status()
-        analysis = parse_analysis_json(response.json()["choices"][0]["message"]["content"], resume_text=resume_text)
+        analysis = parse_analysis_json(response.json()["choices"][0]["message"]["content"], resume_text=audit_resume_text)
         application.ai_analysis = json.dumps(analysis, ensure_ascii=False)
         application.ai_analyzed_at = datetime.now(timezone.utc)
         application.save(update_fields=["ai_analysis", "ai_analyzed_at", "updated_at"])
