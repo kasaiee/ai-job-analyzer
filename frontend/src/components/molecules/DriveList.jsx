@@ -4,6 +4,7 @@ import Button from '../atoms/Button';
 import FileTypeIcon, {isImageFile, isPdfFile} from '../atoms/FileTypeIcon';
 import ViewToggle from '../atoms/ViewToggle';
 import {useLanguage} from '../../templates/LanguageProvider';
+import {applySort, getNextSortState} from '../../utils/sortState';
 
 const FilePreview = ({file, t}) => (
   <div className="drive-file-preview">
@@ -25,7 +26,7 @@ const DriveActions = ({file, onAddToChat, onDescribe, onDownload, onDelete, t}) 
 const DriveList = ({folders, files, view, onViewChange, onOpenFolder, onSelectFile, onAddFolderToChat, onDescribe, onBulkAddToChat, onDownload, onDeleteFolder, onDeleteFile, onBulkDelete}) => {
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
-  const [sort, setSort] = useState({key: 'name', direction: 'asc'});
+  const [sort, setSort] = useState({key: null, direction: null});
   const {language, t, formatDate} = useLanguage();
   const locale = language === 'fa' ? 'fa-IR' : 'en-US';
   const formatFileTime = createdAt => createdAt ? formatDate(createdAt) : t('unknownDate');
@@ -44,15 +45,14 @@ const DriveList = ({folders, files, view, onViewChange, onOpenFolder, onSelectFi
   const selectedFolders = folders.filter(folder => selectedFolderIds.includes(folder.id));
   const selectedCount = selectedFiles.length + selectedFolders.length;
   const itemCount = files.length + folders.length;
-  const sortItems = items => [...items].sort((first, second) => {
-    const result = sort.key === 'name'
+  const sortItems = items => applySort(items, sort, (first, second, key) => {
+    return key === 'name'
       ? first.name.localeCompare(second.name, locale, {numeric: true, sensitivity: 'base'})
       : (new Date(first.created_at || 0).getTime() - new Date(second.created_at || 0).getTime());
-    return sort.direction === 'asc' ? result : -result;
   });
   const sortedFiles = sortItems(files);
   const sortedFolders = sortItems(folders);
-  const changeSort = key => setSort(current => ({key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'}));
+  const changeSort = key => setSort(current => getNextSortState(current, key));
   const SortIcon = ({column}) => sort.key !== column ? <ArrowUpDown size={13}/> : sort.direction === 'asc' ? <ArrowUp size={13}/> : <ArrowDown size={13}/>;
   const toggleFile = fileId => setSelectedFileIds(ids => ids.includes(fileId) ? ids.filter(id => id !== fileId) : [...ids, fileId]);
   const toggleFolder = folderId => setSelectedFolderIds(ids => ids.includes(folderId) ? ids.filter(id => id !== folderId) : [...ids, folderId]);

@@ -1,4 +1,5 @@
 import React from 'react';
+import {getRadarExplanationItems} from '../../utils/radarExplanation';
 
 const SIZE = 280;
 const CENTER = SIZE / 2;
@@ -11,6 +12,15 @@ const pointAt = (index, value, count) => {
 };
 
 const polygonPoints = (values, count) => values.map((value, index) => pointAt(index, value, count).join(',')).join(' ');
+
+export const RadarExplanation = ({dimensions, candidate, expectation, rationales}) => {
+  const explanationItems = getRadarExplanationItems(dimensions, candidate, expectation, rationales);
+
+  return <div className="radar-explanation">
+    <p><b>How scores are estimated:</b> Candidate scores reflect evidence found in the resume or candidate background. Job expectation scores reflect the importance and level inferred from the job description. Both are AI estimates from 0 to 100; farther from the center means stronger evidence or a higher expectation.</p>
+    <ul>{explanationItems.map(item => <li key={item.dimension}><b>{item.dimension} ({item.candidateScore} candidate / {item.expectationScore} expected):</b> {item.description}<span><strong>Why candidate scored {item.candidateScore}:</strong> {item.candidateReason}</span><span><strong>Why expectation is {item.expectationScore}:</strong> {item.expectationReason}</span></li>)}</ul>
+  </div>;
+};
 
 const RadarChart = ({dimensions, candidate, expectation}) => {
   const count = dimensions.length;

@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {Bot, Globe2, MoonStar, X} from 'lucide-react';
 import Button from '../atoms/Button';
+import PopupBackdrop from '../molecules/PopupBackdrop';
 import {useLanguage} from '../../templates/LanguageProvider';
 import {readStoredSettings, SETTINGS_CHANGED_EVENT, SETTINGS_STORAGE_KEY} from '../../utils/settings';
 
@@ -28,34 +29,25 @@ const SettingsModal = ({open, models, currentModel, onClose, onModelChange}) => 
     if (open) setSettings(loadSettings(currentModel));
   }, [open, currentModel]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const closeOnEscape = event => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [open, onClose]);
-
   if (!open) return null;
 
   const updateSetting = (name, value) => setSettings(current => ({...current, [name]: value}));
-  const saveSettings = event => {
+  const saveSettings = (event, requestClose) => {
     event.preventDefault();
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
     window.dispatchEvent(new Event(SETTINGS_CHANGED_EVENT));
     onModelChange(settings.model);
-    onClose();
+    requestClose();
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}>
+    <PopupBackdrop onClose={onClose}>{requestClose =>
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <header className="settings-header">
           <div><h2 id="settings-title">{t('settings')}</h2><p>{t('settingsDescription')}</p></div>
-          <Button type="button" onClick={onClose} aria-label={t('closeSettings')}><X size={18}/></Button>
+          <Button type="button" onClick={requestClose} aria-label={t('closeSettings')}><X size={18}/></Button>
         </header>
-        <form className="settings-layout" onSubmit={saveSettings}>
+        <form className="settings-layout" onSubmit={event => saveSettings(event, requestClose)}>
           <nav className="settings-tabs" aria-label={t('settingsSections')}>
             <Button type="button" className={activeTab === 'ai' ? 'active' : ''} onClick={() => setActiveTab('ai')} aria-selected={activeTab === 'ai'}><Bot size={17}/> {t('ai')}</Button>
             <Button type="button" className={activeTab === 'localization' ? 'active' : ''} onClick={() => setActiveTab('localization')} aria-selected={activeTab === 'localization'}><Globe2 size={17}/> {t('localization')}</Button>
@@ -83,11 +75,11 @@ const SettingsModal = ({open, models, currentModel, onClose, onModelChange}) => 
                 <label>{t('theme')}<select value={settings.theme} onChange={event => updateSetting('theme', event.target.value)}><option value="system">{t('systemTheme')}</option><option value="light">{t('lightTheme')}</option><option value="dark">{t('darkTheme')}</option></select></label>
               </div>
             )}
-            <footer className="settings-actions"><Button type="button" onClick={onClose}>{t('cancel')}</Button><Button type="submit" className="settings-save">{t('saveChanges')}</Button></footer>
+            <footer className="settings-actions"><Button type="button" onClick={requestClose}>{t('cancel')}</Button><Button type="submit" className="settings-save">{t('saveChanges')}</Button></footer>
           </div>
         </form>
-      </section>
-    </div>
+      </section>}
+    </PopupBackdrop>
   );
 };
 

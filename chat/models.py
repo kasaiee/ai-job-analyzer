@@ -73,6 +73,7 @@ class CompanyEmployee(models.Model):
 class JobApplication(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company_name = models.CharField(max_length=200)
+    job_title = models.CharField(max_length=300, blank=True)
     company_image = models.ImageField(upload_to="job-tracker/", blank=True)
     company_description = models.TextField(blank=True)
     job_post_link = models.URLField(max_length=2048, blank=True)
@@ -104,6 +105,21 @@ class TailoredResumeVersion(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["job_application", "version_number"], name="unique_job_resume_version"),
         ]
+
+class CoverLetterVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_application = models.ForeignKey(JobApplication, related_name="cover_letter_versions", on_delete=models.CASCADE)
+    version_number = models.PositiveIntegerField()
+    name = models.CharField(max_length=200)
+    content = models.TextField()
+    template_data = models.JSONField(default=dict, blank=True)
+    model = models.CharField(max_length=100, blank=True)
+    is_current = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["job_application", "version_number"], name="unique_job_cover_letter_version")]
 
 class Conversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
