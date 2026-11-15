@@ -20,9 +20,11 @@ Analyze any job against your real experience, generate a tailored ATS-friendly r
 
 ## Demo
 
-[Download the product walkthrough](docs/demo/ai-job-analyzer-full-v2-16x9-github.mp4)
+<a href="docs/demo/ai-job-analyzer-full-v2-16x9-github.mp4">
+  <img src="docs/demo/ai-job-analyzer-preview.webp" alt="Watch the AI Job Analyzer product walkthrough" />
+</a>
 
-> A walkthrough of the complete flow: store your career once, analyze a job, generate a tailored resume and cover letter, and track the application.
+> Click the animated preview to watch the full walkthrough: store your career once, analyze a job, generate a tailored resume and cover letter, and track the application.
 
 
 ---
@@ -268,7 +270,7 @@ npm test
 - **Thin views, testable services.** Views handle parsing, validation and status codes. AI client (retry and TLS fallback), analysis parsing, resume and cover-letter generation, and PDF rendering live in `chat/services/`.
 - **Provider-agnostic.** Adapters in `chat/services/providers.py` translate the app's OpenAI-style payloads to each provider's wire format and back.
 - **Self-contained.** SQLite by default, no external database needed.
-- Engineering conventions are documented in [AI-RULES.md](AI-RULES.md).
+- Guidelines used when developing with AI assistants are documented in [AI-RULES.md](AI-RULES.md).
 
 ### Tech stack
 
