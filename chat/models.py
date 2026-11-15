@@ -1,0 +1,162 @@
+import uuid
+from django.db import models
+from django.db.models.functions import Lower
+
+
+class MemoryNode(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    content = models.TextField(blank=True)
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, related_name="children", on_delete=models.CASCADE
+    )
+    is_leaf = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                "parent",
+                condition=models.Q(is_leaf=False),
+                name="unique_memory_folder_name_per_parent",
+            ),
+        ]
+
+
+class BrowserContext(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    url = models.URLField(max_length=2048)
+    title = models.CharField(max_length=300, blank=True)
+    text = models.TextField(blank=True)
+    selection = models.TextField(blank=True)
+    screenshot = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Company(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200)
+    aliases = models.JSONField(default=list, blank=True)
+    website = models.URLField(blank=True)
+    linkedin_url = models.URLField(blank=True)
+    brand_image_url = models.TextField(blank=True)
+    industry = models.CharField(max_length=200, blank=True)
+    size = models.CharField(max_length=100, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class CompanyFact(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, related_name="facts", on_delete=models.CASCADE)
+    category = models.CharField(max_length=100, default="general")
+    fact = models.TextField()
+    source = models.CharField(max_length=500, blank=True)
+    confidence = models.CharField(max_length=20, default="medium")
+    observed_at = models.DateTimeField(auto_now_add=True)
+
+
+class CompanyEmployee(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, related_name="employees", on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    title = models.CharField(max_length=300, blank=True)
+    linkedin_url = models.URLField(blank=True)
+    notes = models.TextField(blank=True)
+    source = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class JobApplication(models.Model):
+    class Status(models.TextChoices):
+        WATCHLIST = "WATCHLIST", "Watchlist"
+        APPLIED = "APPLIED", "Applied"
+        INTERVIEW = "INTERVIEW", "Interview"
+        OFFER = "OFFER", "Offer"
+        NOT_SELECTED = "NOT_SELECTED", "Not selected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company_name = models.CharField(max_length=200)
+    job_title = models.CharField(max_length=300, blank=True)
+    company_image = models.ImageField(upload_to="job-tracker/", blank=True)
+    company_description = models.TextField(blank=True)
+    job_post_link = models.URLField(max_length=2048, blank=True)
+    job_description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.WATCHLIST)
+    position = models.PositiveIntegerField(default=0)
+    tailored_resume_text = models.TextField(blank=True)
+    ai_analysis = models.TextField(blank=True)
+    ai_analyzed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ResumeProfile(models.Model):
+    name = models.CharField(max_length=200, default="Default resume")
+    resume_text = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class TailoredResumeVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_application = models.ForeignKey(
+        JobApplication, related_name="resume_versions", on_delete=models.CASCADE
+    )
+    version_number = models.PositiveIntegerField()
+    name = models.CharField(max_length=200)
+    resume_data = models.JSONField(default=dict)
+    page_size = models.CharField(max_length=10, default="A4")
+    model = models.CharField(max_length=100, blank=True)
+    is_current = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job_application", "version_number"], name="unique_job_resume_version"
+            ),
+        ]
+
+
+class CoverLetterVersion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_application = models.ForeignKey(
+        JobApplication, related_name="cover_letter_versions", on_delete=models.CASCADE
+    )
+    version_number = models.PositiveIntegerField()
+    name = models.CharField(max_length=200)
+    content = models.TextField()
+    template_data = models.JSONField(default=dict, blank=True)
+    model = models.CharField(max_length=100, blank=True)
+    is_current = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job_application", "version_number"], name="unique_job_cover_letter_version"
+            )
+        ]
+
+
+class Conversation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200, default="New conversation")
+    model = models.CharField(max_length=100, default="sub-gpt-5.6-luna")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(
+        Conversation, related_name="messages", on_delete=models.CASCADE
+    )
+    role = models.CharField(max_length=20, choices=[("user", "User"), ("assistant", "Assistant")])
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
